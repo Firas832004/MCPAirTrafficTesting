@@ -29,6 +29,7 @@ one machine, so the separation comes from processes, ports and folders, not sepa
 ./run_tests.sh              # demo2 (default): fake data from the local database
 ./run_tests.sh demo1        # live flight data from OpenSky (needs internet; anonymous limit ~400 requests/day)
 ./run_tests.sh demo2 chat   # after the checks pass, also open the chat page at http://127.0.0.1:8002
+./run_tests.sh stop         # stop leftover project servers and the chat page (ports 8000, 8001, 8002)
 ```
 
 The chat page needs Claude credentials, read by the Anthropic SDK from the terminal environment (never stored in
@@ -161,7 +162,8 @@ If a change fits more than one row, use the highest. Never reuse or renumber a p
 - Added: `./run_tests.sh demo1` (live) / `demo2` (fake, default); per-call trace compares the client's result with the
   database rows (`demo2`) or with the REST API's own answer for the same request (`demo1`).
 - Added: chat page (`mcp-client/chat_server.py`, `chat.html`): Claude (default `claude-haiku-4-5`) gets the MCP tools,
-  chooses and calls them, and answers; `./run_tests.sh [demo1|demo2] chat` starts it.
+  chooses and calls them, and answers; `./run_tests.sh [demo1|demo2] chat` starts it and `./run_tests.sh stop` frees
+  the ports (only this project's own servers are stopped).
 - Changed: `/v1/health` now also reports `source`; `count_aircraft` description covers live classifications;
   demo and tests adapt to `DATA_MODE` (`db`/`api`); `anthropic` added to the client requirements.
 - Tests: demo2 and demo1 pass (31 and 31 checks); chat tool loop verified against the real MCP server with a stand-in for Claude.

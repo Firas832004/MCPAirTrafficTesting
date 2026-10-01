@@ -3,12 +3,28 @@
 #   1) discovers the tools, 2) calls each one and shows every layer it passes through (database rows or
 #   the live source's answer), 3) runs the MCP client test suite, 4) runs security/log checks.
 # Every output line is labelled with the component it comes from.
-# Usage: ./run_tests.sh [demo1|demo2] [chat]
+# Usage: ./run_tests.sh [demo1|demo2] [chat]      or      ./run_tests.sh stop
 #   demo2 (default) = fake data from the local database      demo1 = live flight data from OpenSky
 #   chat            = after the checks pass, open the chat UI at http://127.0.0.1:8002 (Ctrl+C stops everything)
+#   stop            = stop this project's leftover servers and chat UI (ports 8000, 8001, 8002) and exit
 cd "$(dirname "$0")" || exit 1
+# --- stop: free ports 8000/8001/8002, but only if the listener is one of this project's own servers ---
+if [ "$1" = stop ]; then
+  for p in 8000 8001 8002; do
+    for pid in $(lsof -t -iTCP:$p -sTCP:LISTEN); do
+      if ps -o command= -p "$pid" | grep -qE 'app\.py|server\.py|chat_server\.py'; then
+        kill "$pid" && echo "Stopped process $pid on port $p"
+      else
+        echo "Port $p is used by another program (pid $pid); left alone."
+      fi
+    done
+  done
+  sleep 1
+  [ -z "$(lsof -t -iTCP:8000 -iTCP:8001 -iTCP:8002 -sTCP:LISTEN)" ] && echo "Ports 8000, 8001 and 8002 are free." || echo "Some ports are still in use."
+  exit 0
+fi
 MODE=db; CHAT=0
-for a in "$@"; do case $a in demo1) MODE=api;; demo2) MODE=db;; chat) CHAT=1;; *) echo "Unknown option: $a (use demo1, demo2, chat)"; exit 2;; esac; done
+for a in "$@"; do case $a in demo1) MODE=api;; demo2) MODE=db;; chat) CHAT=1;; *) echo "Unknown option: $a (use demo1, demo2, chat, or stop on its own)"; exit 2;; esac; done
 export DATA_MODE=$MODE DATA_SOURCE=$([ $MODE = api ] && echo opensky || echo db)
 export REST_API_TOKEN=$(openssl rand -hex 16) MCP_API_TOKEN=$(openssl rand -hex 16)  # never written to disk
 
