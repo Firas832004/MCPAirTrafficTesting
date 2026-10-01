@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Air Traffic Chat</title>
+<style>
+  :root { --bg:#ffffff; --panel:#f7f7f8; --text:#1f2328; --muted:#6e7681; --line:#e5e7eb; --user:#e8f0fe; --accent:#10a37f; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#212121; --panel:#2a2a2a; --text:#ececec; --muted:#9a9a9a; --line:#3a3a3a; --user:#303030; --accent:#19c37d; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif; height:100vh; display:flex; flex-direction:column; }
+  header { display:flex; justify-content:space-between; align-items:center; padding:12px 16px; border-bottom:1px solid var(--line); }
+  header h1 { font-size:16px; margin:0; font-weight:600; }
+  button { font:inherit; cursor:pointer; }
+  .ghost { background:none; border:1px solid var(--line); color:var(--text); border-radius:8px; padding:6px 12px; }
+  #chat { flex:1; overflow-y:auto; padding:16px; }
+  .col { max-width:760px; margin:0 auto; }
+  .msg { display:flex; gap:12px; margin:18px 0; }
+  .msg.user { justify-content:flex-end; }
+  .avatar { width:28px; height:28px; border-radius:50%; background:var(--accent); color:#fff; display:flex; align-items:center; justify-content:center; font-size:14px; flex:none; margin-top:2px; }
+  .bubble { white-space:pre-wrap; overflow-wrap:anywhere; }
+  .user .bubble { background:var(--user); padding:10px 14px; border-radius:18px; max-width:80%; }
+  .body { min-width:0; flex:1; }
+  details { margin-top:8px; font-size:13px; color:var(--muted); }
+  details pre { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:8px; overflow:auto; max-height:220px; color:var(--text); }
+  .meta { font-size:12px; color:var(--muted); margin-top:6px; }
+  .err .bubble { color:#d1242f; }
+  #empty { text-align:center; margin-top:14vh; }
+  #empty h2 { font-weight:600; }
+  .chips { display:flex; flex-wrap:wrap; gap:8px; justify-content:center; margin-top:16px; }
+  .chip { background:var(--panel); border:1px solid var(--line); color:var(--text); border-radius:14px; padding:8px 12px; font-size:14px; }
+  footer { padding:12px 16px 18px; }
+  form { max-width:760px; margin:0 auto; display:flex; gap:8px; align-items:flex-end; background:var(--panel); border:1px solid var(--line); border-radius:24px; padding:8px 8px 8px 16px; }
+  textarea { flex:1; border:0; outline:0; resize:none; background:none; color:var(--text); font:inherit; max-height:160px; padding:6px 0; }
+  #send { background:var(--accent); color:#fff; border:0; border-radius:50%; width:36px; height:36px; font-size:18px; }
+  #send:disabled { opacity:.4; cursor:default; }
+  .note { text-align:center; font-size:12px; color:var(--muted); margin-top:8px; }
+  .dots::after { content:"…"; animation:b 1s infinite; } @keyframes b { 50% { opacity:.2 } }
+</style>
+</head>
+<body>
+<header><h1>✈ Air Traffic Chat</h1><button class="ghost" id="new">New chat</button></header>
+<div id="chat"><div class="col" id="log">
+  <div id="empty"><h2>Ask about aircraft</h2><div class="chips" id="chips"></div></div>
+</div></div>
+<footer>
+  <form id="form"><textarea id="box" rows="1" placeholder="Message Air Traffic Chat" autofocus></textarea><button id="send" title="Send">↑</button></form>
+  <div class="note">Claude answers using the MCP server's tools. Check important details against the source data.</div>
+</footer>
+<script>
+const $ = id => document.getElementById(id);
+let history = [], busy = false;
+const SUGGESTIONS = ["How many aircraft are tracked right now?", "Which aircraft are flying above 30,000 ft?", "What is flying near Riyadh?", "Show me the 3 most recently updated aircraft"];
+SUGGESTIONS.forEach(s => { const b = document.createElement("button"); b.className = "chip"; b.textContent = s; b.onclick = () => send(s); $("chips").append(b); });
+
+function add(role, text, cls = "") {
+  $("empty")?.remove();
+  const m = document.createElement("div"); m.className = `msg ${role} ${cls}`;
+  const body = document.createElement("div"); body.className = "body"; const b = document.createElement("div"); b.className = "bubble"; b.textContent = text; body.append(b);
+  if (role === "assistant") { const a = document.createElement("div"); a.className = "avatar"; a.textContent = "✈"; m.append(a); }
+  m.append(body); $("log").append(m); $("chat").scrollTop = $("chat").scrollHeight; return { m, body, b };
+}
+
+async function send(text) {
+  text = (text ?? $("box").value).trim(); if (!text || busy) return;
+  busy = true; $("send").disabled = true; $("box").value = ""; $("box").style.height = "auto";
+  history.push({ role: "user", content: text }); add("user", text);
+  const pending = add("assistant", ""); pending.b.classList.add("dots");
+  try {
+    const r = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json", "X-Chat-UI": "1" }, body: JSON.stringify({ messages: history }) });
+    const d = await r.json(); pending.b.classList.remove("dots");
+    if (!r.ok) { pending.m.classList.add("err"); pending.b.textContent = d.error || "Request failed."; history.pop(); }
+    else {
+      pending.b.textContent = d.reply; history.push({ role: "assistant", content: d.reply });
+      d.tools.forEach(t => {
+        const det = document.createElement("details"); const sum = document.createElement("summary");
+        sum.textContent = `Used ${t.tool}(${Object.entries(t.args).map(([k, v]) => `${k}=${v}`).join(", ")})${t.status === "error" ? " – error" : ""}`;
+        const pre = document.createElement("pre"); pre.textContent = JSON.stringify(t.result, null, 2); det.append(sum, pre); pending.body.append(det);
+      });
+      const meta = document.createElement("div"); meta.className = "meta"; meta.textContent = `${d.tokens.input} in / ${d.tokens.output} out tokens`; pending.body.append(meta);
+    }
+  } catch { pending.b.classList.remove("dots"); pending.m.classList.add("err"); pending.b.textContent = "Could not reach the chat server."; history.pop(); }
+  busy = false; $("send").disabled = false; $("box").focus(); $("chat").scrollTop = $("chat").scrollHeight;
+}
+
+$("form").onsubmit = e => { e.preventDefault(); send(); };
+$("box").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
+$("box").addEventListener("input", () => { $("box").style.height = "auto"; $("box").style.height = $("box").scrollHeight + "px"; });
+$("new").onclick = () => { history = []; $("log").innerHTML = ""; location.reload(); };
+</script>
+</body>
+</html>

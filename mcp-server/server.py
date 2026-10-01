@@ -9,7 +9,7 @@ import uvicorn
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-HERE, VERSION, MAX = Path(__file__).parent, "0.2.2", 100
+HERE, VERSION, MAX = Path(__file__).parent, "0.3.0", 100
 MCP_TOKEN, REST_TOKEN = os.environ.get("MCP_API_TOKEN", ""), os.environ.get("REST_API_TOKEN", "")
 REST_URL = os.environ.get("REST_API_URL", "http://127.0.0.1:8001").rstrip("/")
 
@@ -94,7 +94,7 @@ def find_aircraft_in_area(lat_min: float, lat_max: float, lon_min: float, lon_ma
 
 @tool
 def count_aircraft(classification: str | None = None) -> int:
-    """Count tracked aircraft, optionally only one classification (civil, cargo or unknown)."""
+    """Count tracked aircraft, optionally only one classification (demo data: civil, cargo, unknown; live data: airborne, ground)."""
     if classification is not None and not re.fullmatch(r"[a-z]{1,20}", classification):
         raise ToolError("classification must be 1-20 lowercase letters.")
     return rest_get("/v1/aircraft/count", {"classification": classification} if classification else None)["count"]

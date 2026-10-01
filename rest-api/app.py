@@ -1,17 +1,22 @@
-"""Private REST API over a SQLite track DB (FAKE data). Only the MCP server should call it.
-Env: REST_API_TOKEN (>= 16 chars, required), REST_API_PORT (default 8001)."""
-import hmac, logging, math, os, re, sqlite3, sys, time, uuid
+"""Private REST API over a switchable flight-data source. Only the MCP server should call it.
+Env: REST_API_TOKEN (>= 16 chars, required), REST_API_PORT (default 8001),
+     DATA_SOURCE = db (default, fake SQLite data) | opensky (live OpenSky Network data)."""
+import hmac, logging, math, os, re, sys, time, uuid
 from pathlib import Path
 
 import uvicorn
 from starlette.applications import Starlette
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-HERE, VERSION, MAX, TIMEOUT = Path(__file__).parent, "0.2.2", 100, 2.0
-DB, TOKEN = HERE / "tracks.db", os.environ.get("REST_API_TOKEN", "")
+from sources import ApiError, DbSource, OpenSkySource
+
+HERE, VERSION, MAX = Path(__file__).parent, "0.3.0", 100
+TOKEN = os.environ.get("REST_API_TOKEN", "")
+SRC = OpenSkySource() if os.environ.get("DATA_SOURCE", "db") == "opensky" else DbSource()
 
 # --- Logging (console + file; tokens are never logged) ---
 (HERE / "logs").mkdir(exist_ok=True)
@@ -22,44 +27,8 @@ for h in (logging.StreamHandler(sys.stdout), logging.FileHandler(HERE / "logs/re
     h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     log.addHandler(h)
 
-# --- Fake data: 5 tracks over the Gulf / Arabian Peninsula (invented callsigns and addresses) ---
-COLUMNS = ("track_id INTEGER PRIMARY KEY, callsign, icao24, aircraft_type, classification, lat REAL, "
-           "lon REAL, altitude_ft INT, speed_kts INT, heading_deg INT, squawk, last_update")
-TRACKS = [
-    (1, "TST401", "7C1A01", "B77W", "civil", 26.1520, 51.8830, 37000, 490, 310, "4521", "2026-01-01T11:59:42+00:00"),
-    (2, "ALP218", "7C1A02", "A320", "civil", 25.4310, 55.2170, 33000, 455, 95, "2214", "2026-01-01T11:59:38+00:00"),
-    (3, "CRG907", "7C1A03", "B748", "cargo", 29.3120, 47.9020, 35000, 480, 220, "5307", "2026-01-01T11:59:45+00:00"),
-    (4, "BRV115", "7C1A04", "E190", "civil", 24.7650, 46.7010, 8500, 240, 175, "3142", "2026-01-01T11:59:30+00:00"),
-    (5, "UNK005", "7C1A05", "C172", "unknown", 27.0480, 49.6100, 4500, 105, 60, "7000", "2026-01-01T11:59:20+00:00"),
-]
 
-
-def seed() -> None:
-    with sqlite3.connect(DB) as conn:
-        conn.execute(f"CREATE TABLE tracks ({COLUMNS})")
-        conn.executemany(f"INSERT INTO tracks VALUES ({','.join('?' * 12)})", TRACKS)
-
-
-def db(sql: str, params: tuple = ()) -> list[dict]:
-    """Read-only, parameterized query with a hard time limit."""
-    conn = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=TIMEOUT)
-    deadline = time.monotonic() + TIMEOUT
-    conn.set_progress_handler(lambda: time.monotonic() > deadline, 10_000)  # truthy return aborts
-    conn.row_factory = sqlite3.Row
-    try:
-        return [dict(r) for r in conn.execute(sql, params)]
-    except sqlite3.OperationalError as e:
-        raise ApiError(504, "query_timeout", "The query took too long.") if "interrupted" in str(e) else e
-    finally:
-        conn.close()
-
-
-# --- Errors and validation ---
-class ApiError(Exception):
-    def __init__(self, status: int, code: str, message: str):
-        self.status, self.code, self.message = status, code, message
-
-
+# --- Validation ---
 def bad(msg: str) -> ApiError:
     return ApiError(422, "invalid_input", msg)
 
@@ -78,41 +47,39 @@ def num(raw, name, lo, hi, kind=float, default=None):
     return v
 
 
-# --- Endpoints ---
+# --- Endpoints (the source runs in a thread so slow upstream calls never block the server) ---
 async def health(r):
-    return JSONResponse({"status": "ok", "version": VERSION, "record_count": db("SELECT COUNT(*) n FROM tracks")[0]["n"]})
+    return JSONResponse({"status": "ok", "version": VERSION, "source": SRC.name,
+                         "record_count": await run_in_threadpool(SRC.health)})
 
 
 async def one(r):
-    rows = db("SELECT * FROM tracks WHERE track_id = ?", (r.path_params["track_id"],))
-    if not rows:
+    rec = await run_in_threadpool(SRC.one, r.path_params["track_id"])
+    if rec is None:
         raise ApiError(404, "not_found", "No aircraft with that track ID.")
-    return JSONResponse(rows[0])
+    return JSONResponse(rec)
 
 
 async def recent(r):
     n = num(r.query_params.get("limit"), "limit", 1, MAX, int, 20)
-    return JSONResponse({"aircraft": db("SELECT * FROM tracks ORDER BY last_update DESC, track_id LIMIT ?", (n,))})
+    return JSONResponse({"aircraft": await run_in_threadpool(SRC.recent, n)})
 
 
 async def area(r):
     q = r.query_params
-    lat = [num(q.get(k), k, -90, 90) for k in ("lat_min", "lat_max")]
-    lon = [num(q.get(k), k, -180, 180) for k in ("lon_min", "lon_max")]
+    lat = tuple(num(q.get(k), k, -90, 90) for k in ("lat_min", "lat_max"))
+    lon = tuple(num(q.get(k), k, -180, 180) for k in ("lon_min", "lon_max"))
     if lat[0] > lat[1] or lon[0] > lon[1]:
         raise bad("min values must not exceed max values.")
     n = num(q.get("limit"), "limit", 1, MAX, int, 20)
-    return JSONResponse({"aircraft": db(
-        "SELECT * FROM tracks WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ? ORDER BY track_id LIMIT ?",
-        (*lat, *lon, n))})
+    return JSONResponse({"aircraft": await run_in_threadpool(SRC.area, lat, lon, n)})
 
 
 async def count(r):
     c = r.query_params.get("classification")
     if c is not None and not re.fullmatch(r"[a-z]{1,20}", c):
         raise bad("classification must be 1-20 lowercase letters.")
-    where, args = ("WHERE classification = ?", (c,)) if c else ("", ())
-    return JSONResponse({"count": db(f"SELECT COUNT(*) n FROM tracks {where}", args)[0]["n"]})
+    return JSONResponse({"count": await run_in_threadpool(SRC.count, c)})
 
 
 # --- Middleware: request ID, token check, one log line per request, safe 500s ---
@@ -160,8 +127,7 @@ app = Starlette(
 if __name__ == "__main__":
     if len(TOKEN) < 16:
         sys.exit("Set REST_API_TOKEN to a random string of at least 16 characters.")
-    if not DB.exists():
-        seed()
+    log.info("data source: %s", SRC.name)
     # 127.0.0.1 = this Mac only.
     uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("REST_API_PORT", "8001")),
                 access_log=False, log_level="warning")

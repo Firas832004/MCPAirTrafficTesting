@@ -1,15 +1,16 @@
-"""Demo: discover the server's tools, call a few, print what comes back. Needs MCP_API_TOKEN."""
-import json
+"""Demo: discover the server's tools, call a few, print what comes back. Needs MCP_API_TOKEN.
+Env: DATA_MODE = db (default, fake data) | api (live data)."""
+import json, os
 
 from connect import call, connect, run
 
-GULF = {"lat_min": 25, "lat_max": 28, "lon_min": 48, "lon_max": 56}
-CALLS = [("get_server_status", {}), ("get_aircraft_by_id", {"track_id": 3}), ("list_recent_aircraft", {"limit": 3}),
-         ("find_aircraft_in_area", GULF), ("count_aircraft", {}), ("count_aircraft", {"classification": "civil"})]
+LIVE = os.environ.get("DATA_MODE") == "api"
+SAUDI = {"lat_min": 16, "lat_max": 33, "lon_min": 34, "lon_max": 56}
 
 
 def aircraft(t) -> str:
-    return f"#{t['track_id']} {t['callsign']} {t['aircraft_type']} ({t['classification']}) FL{t['altitude_ft'] // 100:03d}"
+    alt = "?" if t["altitude_ft"] is None else f"FL{t['altitude_ft'] // 100:03d}"
+    return f"#{t['track_id']} {t['callsign'] or '-'} {t['aircraft_type'] or '?'} ({t['classification']}) {alt}"
 
 
 def summarize(data) -> str:
@@ -20,16 +21,25 @@ def summarize(data) -> str:
     return json.dumps(data)
 
 
+async def step(client, tool: str, args: dict):
+    print(f"called {tool} {json.dumps(args)}")
+    status, data = await call(client, tool, args)
+    print(f"received {summarize(data) if status == 'ok' else 'ERROR: ' + str(data)}")
+    return data
+
+
 async def main() -> None:
     async with connect() as client:
         tools = (await client.list_tools()).tools
         print(f"discovered {len(tools)} tools")
         for t in tools:
             print(f"tool {t.name}: {t.description}")
-        for tool, args in CALLS:
-            print(f"called {tool} {json.dumps(args)}")
-            status, data = await call(client, tool, args)
-            print(f"received {summarize(data) if status == 'ok' else 'ERROR: ' + str(data)}")
+        await step(client, "get_server_status", {})
+        recent = await step(client, "list_recent_aircraft", {"limit": 3})
+        await step(client, "get_aircraft_by_id", {"track_id": recent[0]["track_id"]})
+        await step(client, "find_aircraft_in_area", SAUDI)
+        await step(client, "count_aircraft", {})
+        await step(client, "count_aircraft", {"classification": "airborne" if LIVE else "civil"})
 
 
 if __name__ == "__main__":

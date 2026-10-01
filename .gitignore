@@ -17,3 +17,6 @@ logs/
 # macOS / editor
 .DS_Store
 .vscode/
+
+# Local Claude Code settings
+.claude/
