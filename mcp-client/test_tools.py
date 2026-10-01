@@ -62,7 +62,7 @@ async def main() -> int:
         print(f"{'PASS' if rejected == n_bad else 'FAIL'}  {rejected}/{n_bad} invalid inputs rejected with safe errors")
         for uri, word in (("schema://aircraft", "track_id"), ("info://server", "get_aircraft_by_id")):
             report(f"resource {uri}", word in (await client.read_resource(uri)).contents[0].text)
-    print(f"\n{fails} failure(s)" if fails else "\nAll client checks passed")
+    print(f"\n{fails} failure(s)" if fails else "\nAll MCP client tests passed")
     return fails > 0
 
 
