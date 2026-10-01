@@ -1,0 +1,19 @@
+# Virtual environments and caches
+.venv/
+__pycache__/
+*.pyc
+
+# Generated at runtime (the database is re-created from code on each run)
+logs/
+*.log
+*.db
+
+# Never commit secrets
+.env
+.env.*
+*.key
+*.pem
+
+# macOS / editor
+.DS_Store
+.vscode/
