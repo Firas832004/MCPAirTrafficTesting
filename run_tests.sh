@@ -37,6 +37,7 @@ CLIENT="[MCP CLIENT] "; MCP="[MCP SERVER] "; REST="[REST API]   "; DB="[DATABASE
 TALLY=""
 record() { TALLY+="$1|$2"$'\n'; }
 label() { sed "s/^/$1 /"; }
+livelabel() { awk -v p="$1" '{ print p, $0; fflush() }'; }   # like label, but flushes every line (for live streams)
 stage() { echo; echo "${B}━━ $1 ━━${N}"; }
 pass() { echo "$1 ${G}PASS${N}  $2"; record "$1" PASS; }
 fail() { echo "$1 ${R}FAIL${N}  $2"; record "$1" FAIL; }
@@ -190,6 +191,11 @@ if [ $CHAT = 1 ] && [ $failed -eq 0 ]; then
       echo "      \"$CLI\" auth login"
     fi
   elif [ -z "$ANTHROPIC_API_KEY" ]; then echo "Note: ANTHROPIC_API_KEY is not set in this terminal, so Claude's answers will fail until you export it and rerun."; fi
-  (cd mcp-client && .venv/bin/python chat_server.py)
+  echo "Below: every chat request, tool call and server log line appears live, labelled by component."
+  tail -n0 -F mcp-server/logs/mcp-server.log > >(livelabel "$MCP") 2>/dev/null & pids+=($!)
+  tail -n0 -F rest-api/logs/rest-api.log > >(livelabel "$REST") 2>/dev/null & pids+=($!)
+  disown -a
+  (cd mcp-client && exec .venv/bin/python chat_server.py) & CHATPID=$!; pids+=($CHATPID); disown $CHATPID
+  while kill -0 $CHATPID 2>/dev/null; do sleep 0.5; done   # short sleeps so Ctrl+C / kill run the cleanup promptly
 fi
 exit $((failed > 0))

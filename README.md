@@ -44,6 +44,9 @@ normal Claude login, with only this MCP server's tools allowed (no files, no she
 command-line tool in (`claude auth login`; `run_tests.sh` prints the exact command if you are signed out). The model
 is `haiku` unless `CLAUDE_MODEL` is set. Optional: `CHAT_ENGINE=api` makes `chat_server.py` itself the MCP client
 calling Claude through the Anthropic API (`ANTHROPIC_API_KEY`, never stored in files; default model `claude-haiku-4-5`).
+While the chat runs, the terminal prints each step live, labelled by component: `[CHAT PAGE]` (your question, Claude's
+answer, token counts), `[MCP CLIENT]` (each tool call sent to the MCP server and the result that came back),
+`[MCP SERVER]` and `[REST API]` (their own log lines, sharing a request ID).
 Press Ctrl+C to stop the chat page and both servers.
 
 One command starts both servers with throwaway tokens, then:
@@ -171,6 +174,7 @@ If a change fits more than one row, use the highest. Never reuse or renumber a p
   SQLite source moved into the same module (`DATA_SOURCE=db`, default). Records use the same shape in both.
 - Added: `./run_tests.sh demo1` (live) / `demo2` (fake, default); per-call trace compares the client's result with the
   database rows (`demo2`) or with the REST API's own answer for the same request (`demo1`).
+- Added: live terminal view of every chat request, tool call and server log line while the chat page runs.
 - Added: chat page (`mcp-client/chat_server.py`, `chat.html`): Claude gets the MCP tools, chooses and calls them, and
   answers. Engines: Claude Code headless on your Claude login (default, no API key) or the Anthropic API (`CHAT_ENGINE=api`); `./run_tests.sh [demo1|demo2] chat` starts it and `./run_tests.sh stop` frees
   the ports (only this project's own servers are stopped).
