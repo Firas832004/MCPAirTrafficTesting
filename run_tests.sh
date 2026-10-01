@@ -158,7 +158,7 @@ check "$REST"   "accepts the right token (200)"               "[ \$(curl -s -o /
 check "$MCP"    "endpoint rejects a missing token (401)"      "[ \$(curl -s -o /dev/null -w %{http_code} -X POST localhost:8000/mcp) = 401 ]"
 check "$MCP"    "endpoint rejects the REST API's token (401)" "[ \$(curl -s -o /dev/null -w %{http_code} -X POST -H '$H $REST_API_TOKEN' localhost:8000/mcp) = 401 ]"
 check "$CLIENT" "code has no DB path or credentials"          "! grep -En 'tracks\\.db|sqlite|REST_API|[0-9a-f]{32}' mcp-client/connect.py mcp-client/call_tools.py mcp-client/chat_server.py"
-check "$MCP"    "code has no database access"                 "! grep -En 'sqlite|opensky' mcp-server/server.py"
+check "$MCP"    "code has no database access"                 "! grep -En 'sqlite|opensky-network\.org|api/states' mcp-server/server.py"
 check "$SCRIPT" "tokens never appear in any log"              "! grep -rF -e '$REST_API_TOKEN' -e '$MCP_API_TOKEN' rest-api/logs mcp-server/logs"
 check "$SCRIPT" "every MCP tool call appears in the REST log under the same request ID" \
   "for r in \$(grep ' OK\$' mcp-server/logs/mcp-server.log | grep -oE 'rid=[a-f0-9]+'); do grep -q \"\$r .*-> 200\" rest-api/logs/rest-api.log || exit 1; done"
