@@ -9,7 +9,7 @@ import uvicorn
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-HERE, VERSION, MAX = Path(__file__).parent, "0.1.0", 100
+HERE, VERSION, MAX = Path(__file__).parent, "0.2.1", 100
 MCP_TOKEN, REST_TOKEN = os.environ.get("MCP_API_TOKEN", ""), os.environ.get("REST_API_TOKEN", "")
 REST_URL = os.environ.get("REST_API_URL", "http://127.0.0.1:8001").rstrip("/")
 

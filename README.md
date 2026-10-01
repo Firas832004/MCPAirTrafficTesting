@@ -80,3 +80,70 @@ it must be given the MCP server's token as an `Authorization: Bearer ...` header
 - Everything runs on one machine over localhost, so isolation is weaker than separate hosts.
 - No LLM, natural-language interface, write actions, or guardrail layer yet; tools are read-only.
 - The Inspector's browser interface has not been tested against the token-protected server.
+
+---
+
+## Versioning and change log (read this before changing anything, including if you are an AI assistant)
+
+**Current version: 0.2.1**
+
+This project uses [Semantic Versioning](https://semver.org): `MAJOR.MINOR.PATCH` (for example `0.2.1`).
+It is pre-1.0, so the public interface may still change; breaking changes bump MINOR and are marked **BREAKING**.
+
+### What to bump
+
+| Kind of change | Bump | Examples here |
+|---|---|---|
+| Breaking change to the public interface (after 1.0 bump MAJOR; before 1.0 bump MINOR and mark **BREAKING**) | MAJOR / MINOR | Renaming or removing an MCP tool, changing a tool's arguments or return shape, changing a REST path, changing the token scheme or ports |
+| New backward-compatible feature | MINOR | A new tool, resource or endpoint; new test stages in `run_tests.sh` |
+| Fix, refactor, documentation, test-only or log-only change that does not alter behavior | PATCH | Fixing validation, wording changes, README updates |
+
+If a change fits more than one row, use the highest. Never reuse or renumber a published version.
+
+### Every change must do all of these
+
+1. **Run `./run_tests.sh` and make sure it passes.** Do not bump the version for a failing build.
+2. **Bump the version everywhere it appears** (they must always match):
+   - `VERSION` in `rest-api/app.py`
+   - `VERSION` in `mcp-server/server.py`
+   - "Current version" above
+   - a new heading in the change log below
+3. **Add a change log entry** (newest first) under a heading `### X.Y.Z - YYYY-MM-DD`. List each change under
+   `Added`, `Changed`, `Fixed`, `Removed` or `Security` (omit empty ones), say what changed and why in one line each,
+   mark breaking changes **BREAKING**, and finish with the test result (for example "31 checks pass").
+4. **Write a commit message** whose first line summarises the change, followed by a body that lists the changes
+   (same content as the change log entry). Keep AI co-author trailers if an AI assistant helped.
+5. **Tag releases:** `git tag vX.Y.Z` on the commit that bumps the version, then `git push origin vX.Y.Z`.
+
+### Rules for working on this repo
+
+- Work on a short-lived branch (`feature/<what>` or `fix/<what>`), not directly on `main`; merge by pull request,
+  and run `./run_tests.sh` before opening it.
+- Never rewrite published history (no force-push to `main`).
+- Fake data only. Never commit tokens, passwords, `.env` files, real or employer data, `.venv/`, logs or `*.db`
+  (the `.gitignore` already excludes them). Tokens come from environment variables.
+- AI assistants: do not push, publish or create tags without the user's explicit approval for that action.
+- Keep the architecture rule: the MCP client talks only to the MCP server; only the REST API touches the database.
+
+### Change log
+
+### 0.2.1 - 2026-10-01
+- Changed: README now documents versioning, the change log process, and contribution rules (docs only).
+- Changed: `VERSION` constants in `rest-api/app.py` and `mcp-server/server.py` bumped to 0.2.1 so they match this
+  document (visible in the `/v1/health` response and the `get_server_status` tool).
+- Tests: 31 checks pass.
+
+### 0.2.0 - 2026-09-30
+- Changed: `run_tests.sh` rewritten into five labelled stages with a banner and a per-component scorecard.
+- Added: each demo call is traced through MCP client, MCP server, REST API and database by request ID; the matching rows
+  are read straight from `tracks.db` and compared with what the MCP client received.
+- Added: `README.md` with architecture, usage, security design and limitations.
+- Changed: `mcp-client/call_tools.py` prints `called`/`received` lines; `mcp-client/test_tools.py` final message
+  reworded.
+- Tests: 31 checks pass.
+
+### 0.1.0 - 2026-09-30
+- Added: first working pipeline: MCP client scripts, MCP server (5 tools, 2 resources), private REST API, SQLite
+  database with 5 fake Gulf-region aircraft tracks.
+- Added: bearer-token authentication on both servers, input validation at both layers, read-only database access,
+  request-ID logging in both servers, and `run_tests.sh` (end-to-end test).
