@@ -1,6 +1,8 @@
-"""Practice MCP server for FAKE air traffic tracks. No database access: each tool validates its
-input, then calls the private REST API with a token.
-Env: MCP_API_TOKEN and REST_API_TOKEN (>= 16 chars, required), REST_API_URL, MCP_PORT (default 8000)."""
+"""Practice MCP server for air traffic tracks. No database access: each tool validates its input, then calls the
+private REST API with a token. Tool descriptions and resources match the active data source, so in live mode they
+claim only what OpenSky provides.
+Env: MCP_API_TOKEN and REST_API_TOKEN (>= 16 chars, required), REST_API_URL, MCP_PORT (default 8000),
+     DATA_SOURCE = db (default, fake demo data) | opensky (live) - must match the REST API (the start script sets both)."""
 import contextvars, functools, hmac, json, logging, math, os, re, sys, urllib.error, urllib.parse
 import urllib.request, uuid
 from pathlib import Path
@@ -12,6 +14,22 @@ from mcp.server.mcpserver.exceptions import ToolError
 HERE, VERSION, MAX = Path(__file__).parent, "0.3.0", 100
 MCP_TOKEN, REST_TOKEN = os.environ.get("MCP_API_TOKEN", ""), os.environ.get("REST_API_TOKEN", "")
 REST_URL = os.environ.get("REST_API_URL", "http://127.0.0.1:8001").rstrip("/")
+LIVE = os.environ.get("DATA_SOURCE", "db") == "opensky"
+CLASSES = ("airborne", "ground") if LIVE else ("civil", "cargo", "unknown")
+
+# Descriptions Claude sees, per data source. Live wording lists only what OpenSky provides.
+LIVE_DOCS = {
+    "get_aircraft_by_id": "Get one aircraft's live position report by track ID: callsign, position, altitude (ft), speed (knots), "
+                          "heading, squawk, last update. A track ID is the aircraft's 24-bit ICAO address as an integer; get IDs "
+                          "from list_recent_aircraft or find_aircraft_in_area. Aircraft type is not available.",
+    "list_recent_aircraft": "List the most recently updated aircraft currently reported by OpenSky over Saudi Arabia "
+                            "(lat 16-33, lon 34-56). limit is 1-100 (default 20).",
+    "find_aircraft_in_area": "Find aircraft currently inside a lat/lon bounding box (decimal degrees; west longitudes negative), "
+                             "most recently updated first. Live snapshot only: no history, routes or airports.",
+    "count_aircraft": "Count aircraft currently reported over Saudi Arabia (lat 16-33, lon 34-56), optionally only 'airborne' or 'ground'.",
+    "get_server_status": "Confirm this server and its live OpenSky data layer are up; returns status, version, source and the number "
+                         "of aircraft currently reported over Saudi Arabia.",
+}
 
 # --- Logging (console + file; tokens are never logged) ---
 (HERE / "logs").mkdir(exist_ok=True)
@@ -66,6 +84,8 @@ def tool(fn):
             raise ToolError("Internal error.") from None  # details stay in the log
         log.info("rid=%s tool=%s args=%s OK", rid, fn.__name__, kw)
         return out
+    if LIVE:
+        wrapper.__doc__ = LIVE_DOCS[fn.__name__]
     return mcp.tool()(wrapper)
 
 
@@ -94,25 +114,30 @@ def find_aircraft_in_area(lat_min: float, lat_max: float, lon_min: float, lon_ma
 
 @tool
 def count_aircraft(classification: str | None = None) -> int:
-    """Count tracked aircraft, optionally only one classification (demo data: civil, cargo, unknown; live data: airborne, ground)."""
-    if classification is not None and not re.fullmatch(r"[a-z]{1,20}", classification):
-        raise ToolError("classification must be 1-20 lowercase letters.")
+    """Count tracked aircraft, optionally only one classification (civil, cargo or unknown)."""
+    if classification is not None and classification not in CLASSES:
+        raise ToolError(f"classification must be one of: {', '.join(CLASSES)}.")
     return rest_get("/v1/aircraft/count", {"classification": classification} if classification else None)["count"]
 
 
 @tool
 def get_server_status() -> dict:
-    """Confirm this server and its data layer are up; returns status, version and record count."""
+    """Confirm this server and its data layer are up; returns status, version, source and record count."""
     try:
-        n = rest_get("/v1/health")["record_count"]
+        health = rest_get("/v1/health")
     except ToolError:
         return {"status": "degraded", "version": VERSION, "data_layer": "unreachable", "record_count": None}
-    return {"status": "ok", "version": VERSION, "data_layer": "ok", "record_count": n}
+    return {"status": "ok", "version": VERSION, "data_layer": "ok", "source": health.get("source"), "record_count": health["record_count"]}
 
 
 # --- Resources: read-only context for a future agent ---
 @mcp.resource("schema://aircraft", mime_type="text/plain", description="Fields of an aircraft record")
 def aircraft_schema() -> str:
+    if LIVE:
+        return ("Live aircraft record fields (OpenSky Network, public ADS-B data): track_id (int, the 24-bit ICAO address as an "
+                "integer), callsign (may be empty), icao24 (hex address), aircraft_type (not provided by this source, always "
+                "empty), classification (airborne|ground), lat/lon (decimal degrees, west negative), altitude_ft (may be empty), "
+                "speed_kts, heading_deg (0-359), squawk, last_update (ISO 8601 UTC)")
     return ("Aircraft record fields (all data is FAKE): track_id (int), callsign, icao24 (invented hex address), "
             "aircraft_type (ICAO code), classification (civil|cargo|unknown), lat/lon (decimal degrees, west "
             "negative), altitude_ft, speed_kts, heading_deg (0-359), squawk (4 digits), last_update (ISO 8601 UTC)")
@@ -120,9 +145,13 @@ def aircraft_schema() -> str:
 
 @mcp.resource("info://server", mime_type="text/plain", description="Tools and limits of this server")
 def server_info() -> str:
-    return (f"air-traffic-practice v{VERSION}, read-only, fake data. Tools: get_aircraft_by_id, "
-            f"list_recent_aircraft, find_aircraft_in_area, count_aircraft, get_server_status. "
-            f"Limits: limit must be 1-{MAX}; no write actions exist.")
+    tools = ("Tools: get_aircraft_by_id, list_recent_aircraft, find_aircraft_in_area, count_aircraft, get_server_status. "
+             f"Limits: limit must be 1-{MAX}; no write actions exist.")
+    if LIVE:
+        return (f"air-traffic-practice v{VERSION}, read-only, LIVE OpenSky data over Saudi Arabia (lat 16-33, lon 34-56 for lists "
+                f"and counts). {tools} Not available: search by callsign or airline, history, routes, airports, aircraft type. "
+                "OpenSky rate limits apply; data is cached for 10 seconds.")
+    return f"air-traffic-practice v{VERSION}, read-only, fake demo data. {tools}"
 
 
 class TokenGuard:

@@ -55,7 +55,7 @@ One command starts both servers with throwaway tokens, then:
 2. Has the MCP client discover the server's tools.
 3. Calls each tool and follows the request through every layer (matching request ID in each log),
    shows the rows read straight from the database (`demo2`) or the live source's answer (`demo1`), and checks the client's result matches.
-4. Runs the MCP client test suite: valid calls plus 16 invalid inputs that must be refused safely.
+4. Runs the MCP client test suite: valid calls plus 17 invalid inputs that must be refused safely.
 5. Runs security and logging checks, then prints a per-component scorecard and stops the servers.
 
 Every output line is labelled `[MCP CLIENT]`, `[MCP SERVER]`, `[REST API]`, `[DATABASE]`, `[OPENSKY]` or `[SCRIPT]`.
@@ -174,6 +174,9 @@ If a change fits more than one row, use the highest. Never reuse or renumber a p
   SQLite source moved into the same module (`DATA_SOURCE=db`, default). Records use the same shape in both.
 - Added: `./run_tests.sh demo1` (live) / `demo2` (fake, default); per-call trace compares the client's result with the
   database rows (`demo2`) or with the REST API's own answer for the same request (`demo1`).
+- Changed: tool descriptions, the schema/info resources and `count_aircraft` validation now match the active data source;
+  in live mode they claim only what OpenSky provides (no aircraft type, no callsign search, history, routes or airports)
+  and `classification` must be `airborne` or `ground`; Claude is told to say "not available" instead of guessing.
 - Added: live terminal view of every chat request, tool call and server log line while the chat page runs.
 - Added: chat page (`mcp-client/chat_server.py`, `chat.html`): Claude gets the MCP tools, chooses and calls them, and
   answers. Engines: Claude Code headless on your Claude login (default, no API key) or the Anthropic API (`CHAT_ENGINE=api`); `./run_tests.sh [demo1|demo2] chat` starts it and `./run_tests.sh stop` frees

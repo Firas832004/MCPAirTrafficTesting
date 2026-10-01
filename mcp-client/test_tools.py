@@ -39,6 +39,7 @@ def cases(first: int):
         ("coordinates missing", "find_aircraft_in_area", {"lat_min": 1}, None),
         ("area limit huge", "find_aircraft_in_area", {**G, "limit": 5000}, None),
         ("SQL-style filter", "count_aircraft", {"classification": "x' OR 1=1 --"}, None),
+        ("class this source lacks", "count_aircraft", {"classification": "ground" if not LIVE else "military"}, None),
         ("unknown tool", "delete_everything", {}, None),
     ]
 
