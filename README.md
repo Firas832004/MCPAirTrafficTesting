@@ -85,7 +85,7 @@ it must be given the MCP server's token as an `Authorization: Bearer ...` header
 
 ## Versioning and change log (read this before changing anything, including if you are an AI assistant)
 
-**Current version: 0.2.1**
+**Current version: 0.2.2**
 
 This project uses [Semantic Versioning](https://semver.org): `MAJOR.MINOR.PATCH` (for example `0.2.1`).
 It is pre-1.0, so the public interface may still change; breaking changes bump MINOR and are marked **BREAKING**.
@@ -113,12 +113,14 @@ If a change fits more than one row, use the highest. Never reuse or renumber a p
    mark breaking changes **BREAKING**, and finish with the test result (for example "31 checks pass").
 4. **Write a commit message** whose first line summarises the change, followed by a body that lists the changes
    (same content as the change log entry). Keep AI co-author trailers if an AI assistant helped.
-5. **Tag releases:** `git tag vX.Y.Z` on the commit that bumps the version, then `git push origin vX.Y.Z`.
+5. **Tag releases:** after a release is merged into `main`, run `git tag vX.Y.Z` on that `main` commit, then `git push origin vX.Y.Z`.
 
 ### Rules for working on this repo
 
-- Work on a short-lived branch (`feature/<what>` or `fix/<what>`), not directly on `main`; merge by pull request,
-  and run `./run_tests.sh` before opening it.
+- **Branches:** `main` is always the latest tested release; `develop` is the shared branch the whole team integrates on.
+  Start work from `develop` on a short-lived branch (`feature/<what>` or `fix/<what>`), open a pull request back into
+  `develop`, and run `./run_tests.sh` before opening it. Merge `develop` into `main` (by pull request) only when
+  `./run_tests.sh` passes and the version and change log are up to date. Nobody commits directly to `main` or `develop`.
 - Never rewrite published history (no force-push to `main`).
 - Fake data only. Never commit tokens, passwords, `.env` files, real or employer data, `.venv/`, logs or `*.db`
   (the `.gitignore` already excludes them). Tokens come from environment variables.
@@ -126,6 +128,12 @@ If a change fits more than one row, use the highest. Never reuse or renumber a p
 - Keep the architecture rule: the MCP client talks only to the MCP server; only the REST API touches the database.
 
 ### Change log
+
+### 0.2.2 - 2026-10-01
+- Added: shared `develop` branch for team collaboration.
+- Changed: README branch rules now describe the `main` / `develop` / feature-branch flow and when to tag.
+- Changed: `VERSION` constants bumped to 0.2.2 (docs and process only).
+- Tests: 31 checks pass.
 
 ### 0.2.1 - 2026-10-01
 - Changed: README now documents versioning, the change log process, and contribution rules (docs only).

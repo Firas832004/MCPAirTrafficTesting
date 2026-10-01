@@ -10,7 +10,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-HERE, VERSION, MAX, TIMEOUT = Path(__file__).parent, "0.2.1", 100, 2.0
+HERE, VERSION, MAX, TIMEOUT = Path(__file__).parent, "0.2.2", 100, 2.0
 DB, TOKEN = HERE / "tracks.db", os.environ.get("REST_API_TOKEN", "")
 
 # --- Logging (console + file; tokens are never logged) ---
