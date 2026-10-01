@@ -22,6 +22,7 @@ ENGINE = os.environ.get("CHAT_ENGINE", "claude-code")
 HERE, MAX_STEPS = Path(__file__).parent, 6
 MODEL = os.environ.get("CLAUDE_MODEL") or ("haiku" if ENGINE == "claude-code" else "claude-haiku-4-5")
 SERVER_NAME, CLI_TIMEOUT = "air-traffic", 120
+STREAM_LIMIT = 64 * 1024 * 1024   # one stream-json line can hold a whole tool result (e.g. 100 aircraft), far over the 64 KB default
 MAX_MESSAGES, MAX_CHARS, MAX_RESULT_CHARS = 30, 4000, 30000
 log = logging.getLogger("chat")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -80,7 +81,8 @@ async def ask_claude_code(history: list[dict]) -> dict:
            "--mcp-config", mcp_config, "--strict-mcp-config", "--tools", "", "--allowedTools", f"mcp__{SERVER_NAME}",
            "--append-system-prompt", SYSTEM, "--no-session-persistence", "--disable-slash-commands"]
     proc = await asyncio.create_subprocess_exec(*cmd, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-                                                stderr=asyncio.subprocess.PIPE, cwd=tempfile.gettempdir())
+                                                stderr=asyncio.subprocess.PIPE, cwd=tempfile.gettempdir(),
+                                                limit=STREAM_LIMIT)
     proc.stdin.write(prompt.encode())
     proc.stdin.close()
     err_task = asyncio.create_task(proc.stderr.read())

@@ -177,6 +177,8 @@ If a change fits more than one row, use the highest. Never reuse or renumber a p
 - Changed: tool descriptions, the schema/info resources and `count_aircraft` validation now match the active data source;
   in live mode they claim only what OpenSky provides (no aircraft type, no callsign search, history, routes or airports)
   and `classification` must be `airborne` or `ground`; Claude is told to say "not available" instead of guessing.
+- Fixed: chat page error "Separator is found, but chunk is longer than limit" when a tool result (for example 100 aircraft)
+  made one line of Claude Code's output larger than Python's 64 KB default; the limit is now 64 MB.
 - Added: live terminal view of every chat request, tool call and server log line while the chat page runs.
 - Added: chat page (`mcp-client/chat_server.py`, `chat.html`): Claude gets the MCP tools, chooses and calls them, and
   answers. Engines: Claude Code headless on your Claude login (default, no API key) or the Anthropic API (`CHAT_ENGINE=api`); `./run_tests.sh [demo1|demo2] chat` starts it and `./run_tests.sh stop` frees
