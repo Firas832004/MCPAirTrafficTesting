@@ -1,9 +1,14 @@
-"""Chat web app. You type a question; this MCP client fetches the tools from the MCP server and gives them
-to Claude with your prompt; Claude picks a tool and arguments; this client runs the tool on the MCP server and
-hands the result back to Claude, which writes the answer.
-Env: MCP_API_TOKEN (required), MCP_SERVER_URL, CHAT_PORT (default 8002), CLAUDE_MODEL (default claude-haiku-4-5),
-     Claude credentials: ANTHROPIC_API_KEY (or an `ant auth login` session) - read by the SDK, never stored here."""
-import json, logging, os, sys
+"""Chat web app. You type a question in the page; Claude answers using the MCP server's tools.
+Two engines (env CHAT_ENGINE):
+  claude-code (default) - no API key. Runs Claude Code headless on your normal Claude login; Claude Code is the MCP
+                          client (it fetches the tools, Claude picks one, the tool runs on the MCP server, Claude answers).
+                          One-time setup: sign the command-line tool in with `claude auth login`.
+  api                   - this file is the MCP client: it fetches the tools, gives them and your prompt to Claude through
+                          the Anthropic API (ANTHROPIC_API_KEY or an `ant auth login` session), runs the tool Claude
+                          picks on the MCP server, and hands the result back to Claude.
+Env: MCP_API_TOKEN (required), MCP_SERVER_URL, CHAT_PORT (default 8002), CLAUDE_MODEL (default haiku / claude-haiku-4-5),
+     CLAUDE_BIN (path to the claude command-line tool, found automatically if unset)."""
+import asyncio, glob, json, logging, os, shutil, sys, tempfile
 from pathlib import Path
 
 import anthropic, uvicorn
@@ -11,9 +16,12 @@ from starlette.applications import Starlette
 from starlette.responses import FileResponse, JSONResponse
 from starlette.routing import Route
 
-from connect import call, connect
+from connect import URL, call, connect
 
-HERE, MODEL, MAX_STEPS = Path(__file__).parent, os.environ.get("CLAUDE_MODEL", "claude-haiku-4-5"), 6
+ENGINE = os.environ.get("CHAT_ENGINE", "claude-code")
+HERE, MAX_STEPS = Path(__file__).parent, 6
+MODEL = os.environ.get("CLAUDE_MODEL") or ("haiku" if ENGINE == "claude-code" else "claude-haiku-4-5")
+SERVER_NAME, CLI_TIMEOUT = "air-traffic", 120
 MAX_MESSAGES, MAX_CHARS, MAX_RESULT_CHARS = 30, 4000, 30000
 log = logging.getLogger("chat")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -25,6 +33,79 @@ If a tool returns an error or nothing, say so plainly. Units: altitude in feet, 
 Rough areas (lat, lon): Saudi Arabia 16-33, 34-56; Riyadh 24.7, 46.7; Jeddah 21.5, 39.2; Dammam 26.4, 50.1 (use a box
 around a city). Use get_server_status if asked whether the data is live or demo. Keep answers short; use a compact list
 or table for several aircraft."""
+
+
+class ChatError(Exception):
+    """A problem with a user-facing message."""
+    def __init__(self, status: int, message: str):
+        self.status, self.message = status, message
+
+
+def find_cli() -> str:
+    """The claude command-line tool: CLAUDE_BIN, then PATH, then the copy bundled with the Claude app."""
+    if os.environ.get("CLAUDE_BIN"):
+        return os.environ["CLAUDE_BIN"]
+    bundled = sorted(glob.glob(os.path.expanduser("~/Library/Application Support/Claude/claude-code/*/claude.app/Contents/MacOS/claude")))
+    cli = shutil.which("claude") or (bundled[-1] if bundled else None)
+    if not cli:
+        raise ChatError(500, "The claude command-line tool was not found. Install Claude Code or set CLAUDE_BIN.")
+    return cli
+
+
+def tool_text(content) -> object:
+    """A tool_result's content (text blocks or a string) -> parsed JSON when possible."""
+    text = content if isinstance(content, str) else "".join(b.get("text", "") for b in content or [] if isinstance(b, dict))
+    try:
+        return json.loads(text)
+    except ValueError:
+        return text
+
+
+async def ask_claude_code(history: list[dict]) -> dict:
+    """Run one turn through headless Claude Code. It acts as the MCP client: it loads the MCP server's tools, Claude
+    picks and calls them, and Claude writes the answer. Only this MCP server's tools are allowed (no files, no shell)."""
+    cli = find_cli()
+    past = "".join(f"{'User' if m['role'] == 'user' else 'Assistant'}: {m['content']}\n" for m in history[:-1])
+    prompt = (f"Conversation so far:\n{past}\n" if past else "") + f"User's new message: {history[-1]['content']}"
+    mcp_config = json.dumps({"mcpServers": {SERVER_NAME: {"type": "http", "url": URL,
+                             "headers": {"Authorization": "Bearer ${MCP_API_TOKEN}"}}}})   # token comes from the environment
+    cmd = [cli, "-p", "--model", MODEL, "--output-format", "stream-json", "--verbose", "--max-turns", str(MAX_STEPS + 2),
+           "--mcp-config", mcp_config, "--strict-mcp-config", "--tools", "", "--allowedTools", f"mcp__{SERVER_NAME}",
+           "--append-system-prompt", SYSTEM, "--no-session-persistence", "--disable-slash-commands"]
+    proc = await asyncio.create_subprocess_exec(*cmd, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+                                                stderr=asyncio.subprocess.PIPE, cwd=tempfile.gettempdir())
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(prompt.encode()), CLI_TIMEOUT)
+    except asyncio.TimeoutError:
+        proc.kill()
+        raise ChatError(504, "Claude Code took too long to answer.") from None
+    trace, pending, final, tokens = [], {}, None, {"input": 0, "output": 0}
+    for line in out.decode(errors="replace").splitlines():
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        blocks = (ev.get("message") or {}).get("content")
+        for b in blocks if isinstance(blocks, list) else []:
+            if ev.get("type") == "assistant" and b.get("type") == "tool_use":
+                pending[b["id"]] = {"tool": b["name"].removeprefix(f"mcp__{SERVER_NAME}__"), "args": b.get("input", {}), "status": "ok", "result": None}
+                trace.append(pending[b["id"]])
+            elif ev.get("type") == "user" and b.get("type") == "tool_result" and b.get("tool_use_id") in pending:
+                t = pending[b["tool_use_id"]]
+                t["status"], t["result"] = ("error" if b.get("is_error") else "ok"), tool_text(b.get("content"))
+        if ev.get("type") == "result":
+            final = ev
+            u = ev.get("usage") or {}
+            tokens = {"input": u.get("input_tokens", 0) + u.get("cache_read_input_tokens", 0) + u.get("cache_creation_input_tokens", 0),
+                      "output": u.get("output_tokens", 0)}
+    text = ((final or {}).get("result") or "").strip()
+    problem = (text + err.decode(errors="replace")).lower()
+    if final is None or final.get("is_error"):
+        if any(w in problem for w in ("authenticate", "oauth", "login", "log in", "credentials", "401")):
+            raise ChatError(401, f'Claude Code is not signed in. In a terminal run:  "{cli}" auth login   then try again.')
+        log.error("claude-code failed (exit %s): %s", proc.returncode, (text or err.decode(errors="replace"))[:300])
+        raise ChatError(500, "Claude Code could not answer. Is the MCP server running (check the terminal that started it)?")
+    return {"reply": text or "I couldn't finish that request. Please try rephrasing.", "tools": trace, "tokens": tokens}
 
 
 async def ask(history: list[dict]) -> dict:
@@ -70,7 +151,9 @@ async def chat(request):
     if not valid(history):
         return JSONResponse({"error": "Send 1-30 messages (max 4000 characters each), ending with a user message."}, status_code=400)
     try:
-        return JSONResponse(await ask(history))
+        return JSONResponse(await (ask_claude_code(history) if ENGINE == "claude-code" else ask(history)))
+    except ChatError as e:
+        return JSONResponse({"error": e.message}, status_code=e.status)
     except Exception as e:
         while getattr(e, "exceptions", None):   # the MCP connection wraps errors in an ExceptionGroup
             e = e.exceptions[0]
@@ -91,5 +174,5 @@ app = Starlette(routes=[Route("/", page), Route("/api/chat", chat, methods=["POS
 if __name__ == "__main__":
     if not os.environ.get("MCP_API_TOKEN"):
         sys.exit("Set MCP_API_TOKEN to the token the MCP server uses.")
-    log.info("chat UI on http://127.0.0.1:%s (model %s)", os.environ.get("CHAT_PORT", "8002"), MODEL)
+    log.info("chat UI on http://127.0.0.1:%s (engine %s, model %s)", os.environ.get("CHAT_PORT", "8002"), ENGINE, MODEL)
     uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("CHAT_PORT", "8002")), log_level="warning")

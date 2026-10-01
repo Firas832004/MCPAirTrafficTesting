@@ -29,12 +29,22 @@ one machine, so the separation comes from processes, ports and folders, not sepa
 ./run_tests.sh              # demo2 (default): fake data from the local database
 ./run_tests.sh demo1        # live flight data from OpenSky (needs internet; anonymous limit ~400 requests/day)
 ./run_tests.sh demo2 chat   # after the checks pass, also open the chat page at http://127.0.0.1:8002
+./run_tests.sh serve demo1  # just run the servers (no tests) and print the command that registers the MCP server in Claude Code
+./run_tests.sh stop         # stop project servers and the chat page on ports 8000, 8001, 8002 (including any you started yourself)
 ./run_tests.sh stop         # stop leftover project servers and the chat page (ports 8000, 8001, 8002)
 ```
 
-The chat page needs Claude credentials, read by the Anthropic SDK from the terminal environment (never stored in
-files): `export ANTHROPIC_API_KEY=...` in the same terminal before running. The model is `claude-haiku-4-5` unless
-`CLAUDE_MODEL` is set. Press Ctrl+C to stop the chat page and both servers.
+**Claude Code (or Desktop) as the MCP client directly:** run `./run_tests.sh serve demo1`, run the `claude mcp add ...`
+command it prints in another terminal, and start a new Claude Code session; Claude then calls the five tools itself.
+The token is for that run only (export your own `MCP_API_TOKEN` first for a fixed one) and is stored in Claude's config
+in your home folder, never in this repo.
+
+The chat page needs no API key. By default (`CHAT_ENGINE=claude-code`) it runs Claude Code in headless mode on your
+normal Claude login, with only this MCP server's tools allowed (no files, no shell). One-time setup: sign the
+command-line tool in (`claude auth login`; `run_tests.sh` prints the exact command if you are signed out). The model
+is `haiku` unless `CLAUDE_MODEL` is set. Optional: `CHAT_ENGINE=api` makes `chat_server.py` itself the MCP client
+calling Claude through the Anthropic API (`ANTHROPIC_API_KEY`, never stored in files; default model `claude-haiku-4-5`).
+Press Ctrl+C to stop the chat page and both servers.
 
 One command starts both servers with throwaway tokens, then:
 
@@ -105,8 +115,8 @@ it must be given the MCP server's token as an `Authorization: Bearer ...` header
 - Everything runs on one machine over localhost, so isolation is weaker than separate hosts.
 - Claude only reads data through the tools; there are no write actions and no guardrail layer beyond validation yet.
 - The Inspector's browser interface has not been tested against the token-protected server.
-- The chat page was tested with a stand-in for Claude (tool loop against the real MCP server); a full run with real
-  Claude credentials is done by the user.
+- The chat page was tested with stand-ins for Claude (the API tool loop against the real MCP server; the Claude Code
+  engine's output parsing and its not-signed-in message). A real answer needs the user to sign in the CLI once.
 
 ---
 
@@ -161,8 +171,8 @@ If a change fits more than one row, use the highest. Never reuse or renumber a p
   SQLite source moved into the same module (`DATA_SOURCE=db`, default). Records use the same shape in both.
 - Added: `./run_tests.sh demo1` (live) / `demo2` (fake, default); per-call trace compares the client's result with the
   database rows (`demo2`) or with the REST API's own answer for the same request (`demo1`).
-- Added: chat page (`mcp-client/chat_server.py`, `chat.html`): Claude (default `claude-haiku-4-5`) gets the MCP tools,
-  chooses and calls them, and answers; `./run_tests.sh [demo1|demo2] chat` starts it and `./run_tests.sh stop` frees
+- Added: chat page (`mcp-client/chat_server.py`, `chat.html`): Claude gets the MCP tools, chooses and calls them, and
+  answers. Engines: Claude Code headless on your Claude login (default, no API key) or the Anthropic API (`CHAT_ENGINE=api`); `./run_tests.sh [demo1|demo2] chat` starts it and `./run_tests.sh stop` frees
   the ports (only this project's own servers are stopped).
 - Changed: `/v1/health` now also reports `source`; `count_aircraft` description covers live classifications;
   demo and tests adapt to `DATA_MODE` (`db`/`api`); `anthropic` added to the client requirements.

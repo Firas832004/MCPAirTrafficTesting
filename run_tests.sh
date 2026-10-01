@@ -3,9 +3,12 @@
 #   1) discovers the tools, 2) calls each one and shows every layer it passes through (database rows or
 #   the live source's answer), 3) runs the MCP client test suite, 4) runs security/log checks.
 # Every output line is labelled with the component it comes from.
-# Usage: ./run_tests.sh [demo1|demo2] [chat]      or      ./run_tests.sh stop
+# Usage: ./run_tests.sh [demo1|demo2] [chat]      or      ./run_tests.sh serve [demo1|demo2]      or      ./run_tests.sh stop
 #   demo2 (default) = fake data from the local database      demo1 = live flight data from OpenSky
-#   chat            = after the checks pass, open the chat UI at http://127.0.0.1:8002 (Ctrl+C stops everything)
+#   chat            = after the checks pass, open the chat UI at http://127.0.0.1:8002 (Ctrl+C stops everything);
+#                     answers come from Claude Code on your Claude login (no API key); CHAT_ENGINE=api uses the Anthropic API instead
+#   serve           = just run the REST API + MCP server (no tests) and print the command that registers the MCP
+#                     server in Claude Code, so Claude itself acts as the MCP client (no Anthropic API key needed)
 #   stop            = stop this project's leftover servers and chat UI (ports 8000, 8001, 8002) and exit
 cd "$(dirname "$0")" || exit 1
 # --- stop: free ports 8000/8001/8002, but only if the listener is one of this project's own servers ---
@@ -23,10 +26,10 @@ if [ "$1" = stop ]; then
   [ -z "$(lsof -t -iTCP:8000 -iTCP:8001 -iTCP:8002 -sTCP:LISTEN)" ] && echo "Ports 8000, 8001 and 8002 are free." || echo "Some ports are still in use."
   exit 0
 fi
-MODE=db; CHAT=0
-for a in "$@"; do case $a in demo1) MODE=api;; demo2) MODE=db;; chat) CHAT=1;; *) echo "Unknown option: $a (use demo1, demo2, chat, or stop on its own)"; exit 2;; esac; done
+MODE=db; CHAT=0; SERVE=0
+for a in "$@"; do case $a in demo1) MODE=api;; demo2) MODE=db;; chat) CHAT=1;; serve) SERVE=1;; *) echo "Unknown option: $a (use demo1, demo2, chat, serve, or stop on its own)"; exit 2;; esac; done
 export DATA_MODE=$MODE DATA_SOURCE=$([ $MODE = api ] && echo opensky || echo db)
-export REST_API_TOKEN=$(openssl rand -hex 16) MCP_API_TOKEN=$(openssl rand -hex 16)  # never written to disk
+export REST_API_TOKEN=$(openssl rand -hex 16) MCP_API_TOKEN=${MCP_API_TOKEN:-$(openssl rand -hex 16)}  # never written to disk
 
 # --- Output helpers ---
 if [ -t 1 ]; then G=$'\033[32m'; R=$'\033[31m'; B=$'\033[1m'; D=$'\033[2m'; N=$'\033[0m'; else G=; R=; B=; D=; N=; fi
@@ -70,10 +73,19 @@ cleanup() {
   for _ in $(seq 50); do [ -z "$(lsof -t -iTCP:8000 -iTCP:8001 -sTCP:LISTEN)" ] && break; sleep 0.1; done
 }
 trap cleanup EXIT
+trap 'exit 130' INT TERM   # Ctrl+C still runs the cleanup above
 for _ in $(seq 50); do
   curl -s -o /dev/null http://127.0.0.1:8001/ && curl -s -o /dev/null http://127.0.0.1:8000/ && break
   sleep 0.2
 done
+# --- serve: leave the servers running for Claude Code (or Claude Desktop) to use as the MCP client ---
+if [ $SERVE = 1 ]; then
+  echo; echo "${G}${B}Servers are running${N} ($SRCDESC). MCP endpoint: http://127.0.0.1:8000/mcp"
+  echo; echo "To let Claude use the tools, run this once in another terminal, then start a NEW Claude Code session:"
+  echo; echo "  claude mcp remove air-traffic >/dev/null 2>&1; claude mcp add --transport http air-traffic http://127.0.0.1:8000/mcp --header \"Authorization: Bearer $MCP_API_TOKEN\""
+  echo; echo "(The token above is for this run only and is shown here in your terminal only. Ctrl+C stops everything.)"
+  while :; do sleep 3600 & wait $!; done   # 'wait' lets Ctrl+C / kill run the cleanup immediately
+fi
 stage "1  Start services"
 pass "$SCRIPT" "REST API up on :8001 and MCP server up on :8000 (throwaway tokens)"
 if [ $MODE = api ]; then
@@ -169,8 +181,15 @@ fi
 # --- Optional chat UI (stays up until Ctrl+C; the EXIT trap then stops the servers) ---
 if [ $CHAT = 1 ] && [ $failed -eq 0 ]; then
   stage "Chat UI"
-  echo "Open http://127.0.0.1:8002   (model: ${CLAUDE_MODEL:-claude-haiku-4-5}; Ctrl+C stops everything)"
-  [ -z "$ANTHROPIC_API_KEY" ] && echo "Note: ANTHROPIC_API_KEY is not set in this terminal, so Claude's answers will fail until you export it and rerun."
+  echo "Open http://127.0.0.1:8002   (engine: ${CHAT_ENGINE:-claude-code}; Ctrl+C stops everything)"
+  if [ "${CHAT_ENGINE:-claude-code}" = claude-code ]; then
+    CLI=$(command -v claude || ls -d "$HOME"/Library/Application\ Support/Claude/claude-code/*/claude.app/Contents/MacOS/claude 2>/dev/null | tail -1)
+    if [ -z "$CLI" ]; then echo "Note: the claude command-line tool was not found, so chat answers will fail."
+    elif ! "$CLI" auth status 2>/dev/null | grep -q '"loggedIn": true'; then
+      echo "Note: Claude Code is not signed in, so chat answers will fail. In another terminal run once:"
+      echo "      \"$CLI\" auth login"
+    fi
+  elif [ -z "$ANTHROPIC_API_KEY" ]; then echo "Note: ANTHROPIC_API_KEY is not set in this terminal, so Claude's answers will fail until you export it and rerun."; fi
   (cd mcp-client && .venv/bin/python chat_server.py)
 fi
 exit $((failed > 0))
